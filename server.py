@@ -7,8 +7,41 @@ import os
 not_stopped = True
 s = socket.socket()
 id = 0
+max_size = 524
 
-# this function will call when a SIGINT,SIGQUIT,SIGTERM signal receives!
+
+def parse_header(header):
+    sequenceNumber = int(header[0:4].decode())
+    acknowledgementNumber = int(header[4:8].decode())
+    connectionID = int(header[8:10].decode())
+    t = int(header[10:12].decode())
+    A = 1 if int(t/4) == 1 else 0
+    S = 1 if int((t % 4)/2) == 1 else 0
+    FIN = 1 if (t % 2) != 0 else 0
+    header_data = {
+        'sequenceNumber': sequenceNumber,
+        'acknowledgementNumber': acknowledgementNumber,
+        'connectionID': connectionID,
+        'A': A,
+        'S': S,
+        'FIN': FIN
+    }
+    return header_data
+
+
+def create_header(sequenceNumber, acknowledgementNumber, connectionID, A, S, FIN):
+    s_n = str(sequenceNumber)
+    s_n = '0' * (4-len(s_n)) + s_n
+
+    a_n = str(acknowledgementNumber)
+    a_n = '0' * (4-len(a_n)) + a_n
+
+    con_id = str(connectionID)
+    con_id = '0' * (2 - len(con_id)) + con_id
+
+    t = '0'+str((A*4)+(S*2)+(FIN*1))
+    header = (s_n + a_n + con_id + t).encode()
+    return header
 
 
 def exit_gracefully(signalNumber, frame):
@@ -23,28 +56,38 @@ def exit_gracefully(signalNumber, frame):
     return
 
 
-def client_thread(conn, path):
+def client_thread(conn, path, connectionID):
     # set filename accoding to the id.
-    fileName = path + '/' + str(id) + '.file'
+    fileName = path + '/' + str(connectionID) + '.file'
+    sequenceNumber = 4321
+    acknowledgementNumber = 0
     # open file as write bite format
     f = open(fileName, 'wb+')
     try:
-        # send "accio" command
-        conn.send(b"accio\r\n")
 
-        # receive file from client
-        chunk = conn.recv(1024)
+        msg = conn.recv(max_size)
+        msg_header = parse_header(msg[:12])
+        if msg_header['S']:
+            acknowledgementNumber = msg_header['sequenceNumber']
+        header = create_header(
+            sequenceNumber, acknowledgementNumber, connectionID, 1, 1, 0)
+        sequenceNumber += 1
+        conn.send(header)
+        fin = False
+        while fin != True:
+            msg = conn.recv(max_size)
+            msg_header = parse_header(msg[:12])
+            acknowledgementNumber = msg_header['sequenceNumber']
+            if msg_header['FIN']:
+                print("File Received successfully.")
+                fin = True
+            data = msg[12:]
+            f.write(data)
 
-        length = len(chunk)
-        f.write(chunk)
-
-        while chunk:
-            chunk = conn.recv(1024)
-            length = length + len(chunk)
-            f.write(chunk)
-        # after receiving the file, close the file and connection.
-        print(length, " Bytes received!")
-
+        header = create_header(
+            sequenceNumber, acknowledgementNumber, connectionID, 1, 0, 1)
+        sequenceNumber += 1
+        conn.send(header)
     except socket.timeout:
         # if timeout detected, flush the file and write single "ERROR" string in the file.
         f.flush()
@@ -113,7 +156,7 @@ def main():
             conn.settimeout(10)
             # set id
             id = id + 1
-            start_new_thread(client_thread, (conn, path, ))
+            start_new_thread(client_thread, (conn, path, id))
         except OSError:
             pass
     # after all exit from the main function with exit code of 0
