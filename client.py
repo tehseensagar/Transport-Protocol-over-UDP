@@ -10,7 +10,7 @@ if len(sys.argv) < 4:
 
 # socket creation.
 try:
-    s = socket.socket()
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
 except Exception:
     sys.stderr.write("ERROR: Socket creation failed...!\n")
@@ -60,14 +60,31 @@ def create_header(sequenceNumber, acknowledgementNumber, connectionID, A, S, FIN
     return header
 
 
-max_size = 524
-# set timeout of the socket
-s.settimeout(10)
+buff_size = 524
+addr = (host, port)
+
+sequenceNumber = 42
+acknowledgementNumber = 0
+connectionID = 0
+
+
+def connect_to_server():
+    global addr
+    global sequenceNumber, acknowledgementNumber, connectionID
+    header = create_header(
+        sequenceNumber, acknowledgementNumber, connectionID, 0, 1, 0)
+    sequenceNumber = (sequenceNumber + 1) if sequenceNumber < 204800 else 0
+    s.sendto(header, addr)
+    msg, addr = s.recvfrom(buff_size)
+    header = parse_header(msg[:12])
+    if header['S'] and header['A']:
+        connectionID = header['connectionID']
+        acknowledgementNumber = header['sequenceNumber']
 
 
 try:
 
-    s.connect((host, port))
+    connect_to_server()
     print("connected to the server!")
 except socket.timeout:
     sys.stderr.write("ERROR: Socket connetion time exceed.!\n")
@@ -89,38 +106,28 @@ for i in range(0, os.path.getsize(fileName), 512):
     bytes = file.read(512)
 
     data_chunks.append(bytes)
-sequenceNumber = 42
-acknowledgementNumber = 0
-connectionID = 0
-try:
-    header = create_header(
-        sequenceNumber, acknowledgementNumber, connectionID, 0, 1, 0)
-    sequenceNumber += 1
-    s.send(header)
-    msg = s.recv(max_size)
-    header = parse_header(msg[:12])
-    if header['S'] and header['A']:
-        connectionID = header['connectionID']
-        acknowledgementNumber = header['sequenceNumber']
 
+try:
     for data in data_chunks:
 
         header = create_header(
             sequenceNumber, acknowledgementNumber, connectionID, 1, 0, 0)
 
-        acknowledgementNumber += 1
-        sequenceNumber += 1
+        acknowledgementNumber = (
+            acknowledgementNumber + 1) if acknowledgementNumber < 204800 else 0
+        sequenceNumber = (sequenceNumber + 1) if sequenceNumber < 204800 else 0
         frame = header + data
-        s.send(frame)
+        s.sendto(frame, addr)
         time.sleep(1)
     print("File send successfully.")
     header = create_header(
         sequenceNumber, acknowledgementNumber, connectionID, 1, 0, 1)
-    sequenceNumber += 1
-    acknowledgementNumber += 1
-    s.send(header)
+    acknowledgementNumber = (acknowledgementNumber +
+                             1) if acknowledgementNumber < 204800 else 0
+    sequenceNumber = (sequenceNumber + 1) if sequenceNumber < 204800 else 0
+    s.sendto(header, addr)
     while 1:
-        msg = s.recv(max_size)
+        msg, addr = s.recvfrom(buff_size)
         header = parse_header(msg[:12])
         if header['A']:
             print("Closing Connection.")

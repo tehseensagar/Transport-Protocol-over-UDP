@@ -5,7 +5,7 @@ from _thread import *
 import os
 
 not_stopped = True
-s = socket.socket()
+s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 id = 0
 max_size = 524
 
@@ -56,7 +56,7 @@ def exit_gracefully(signalNumber, frame):
     return
 
 
-def client_thread(conn, path, connectionID):
+def client_thread(s, addr, path, connectionID):
     # set filename accoding to the id.
     fileName = path + '/' + str(connectionID) + '.file'
     sequenceNumber = 4321
@@ -65,17 +65,19 @@ def client_thread(conn, path, connectionID):
     f = open(fileName, 'wb+')
     try:
 
-        msg = conn.recv(max_size)
+        msg, x = s.recvfrom(max_size)
         msg_header = parse_header(msg[:12])
         if msg_header['S']:
             acknowledgementNumber = msg_header['sequenceNumber']
         header = create_header(
             sequenceNumber, acknowledgementNumber, connectionID, 1, 1, 0)
-        sequenceNumber += 1
-        conn.send(header)
+        acknowledgementNumber = (
+            acknowledgementNumber + 1) if acknowledgementNumber < 204800 else 0
+        sequenceNumber = (sequenceNumber + 1) if sequenceNumber < 204800 else 0
+        s.sendto(header, addr)
         fin = False
         while fin != True:
-            msg = conn.recv(max_size)
+            msg, x = s.recvfrom(max_size)
             msg_header = parse_header(msg[:12])
             acknowledgementNumber = msg_header['sequenceNumber']
             if msg_header['FIN']:
@@ -86,8 +88,10 @@ def client_thread(conn, path, connectionID):
 
         header = create_header(
             sequenceNumber, acknowledgementNumber, connectionID, 1, 0, 1)
-        sequenceNumber += 1
-        conn.send(header)
+        acknowledgementNumber = (
+            acknowledgementNumber + 1) if acknowledgementNumber < 204800 else 0
+        sequenceNumber = (sequenceNumber + 1) if sequenceNumber < 204800 else 0
+        s.sendto(header, addr)
     except socket.timeout:
         # if timeout detected, flush the file and write single "ERROR" string in the file.
         f.flush()
@@ -97,7 +101,6 @@ def client_thread(conn, path, connectionID):
         sys.stderr.write("ERROR: File receiving timeout.!\n")
     finally:
         f.close()
-        conn.close()
 
 
 # register to the SIGINT,SIGTERM signal.
@@ -136,9 +139,6 @@ def main():
         sys.stderr.write("ERROR: Socket creation failed...!\n")
         sys.exit(1)
 
-    # server only listen upto 10 connections.
-    s.listen(10)
-
     # make directory to save files
     path = os.getcwd()
     path = path + '/' + fileDir
@@ -150,13 +150,13 @@ def main():
 
         try:
             # accept incoming connection
-            conn, addr = s.accept()
+            data, addr = s.recvfrom(max_size)
             print(addr, "has connected to the server!")
             # set timeout to 10s
-            conn.settimeout(10)
+            # s.settimeout(10)
             # set id
             id = id + 1
-            start_new_thread(client_thread, (conn, path, id))
+            start_new_thread(client_thread, (s, addr, path, id))
         except OSError:
             pass
     # after all exit from the main function with exit code of 0
