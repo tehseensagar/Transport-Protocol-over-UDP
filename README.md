@@ -1,4 +1,4 @@
-# Project2
+# Transport Protocol over UDP
 
 A data transfer protocol, including connection establishment and congestion control. 
 A client transmits a file as soon as the connection is established
